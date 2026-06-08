@@ -74,7 +74,15 @@ lazy_static::lazy_static! {
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
     pub static ref DEFAULT_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
-    pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+    // SullTec: FORCED server config. OVERWRITE_SETTINGS is the top layer in Config::get_option
+    // (get_or checks it before saved options + defaults), so these win over ANY saved/IP config
+    // on deployed clients — even ones that already had RustDesk pointed elsewhere.
+    pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(HashMap::from([
+        ("custom-rendezvous-server".to_owned(), "rustdesk.sulltec.com".to_owned()),
+        ("relay-server".to_owned(), "rustdesk.sulltec.com".to_owned()),
+        ("api-server".to_owned(), "http://rustdesk.sulltec.com:21114".to_owned()),
+        ("key".to_owned(), "<redacted>".to_owned()),
+    ]));
     pub static ref DEFAULT_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
