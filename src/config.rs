@@ -69,7 +69,7 @@ lazy_static::lazy_static! {
     static ref ONLINE: Mutex<HashMap<String, i64>> = Default::default();
     pub static ref PROD_RENDEZVOUS_SERVER: RwLock<String> = RwLock::new("".to_owned());
     pub static ref EXE_RENDEZVOUS_SERVER: RwLock<String> = Default::default();
-    pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());
+    pub static ref APP_NAME: RwLock<String> = RwLock::new("SullTec Remote".to_owned());
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
@@ -496,6 +496,60 @@ fn patch(path: PathBuf) -> PathBuf {
         }
     }
     path
+}
+
+/// SullTec rebrand: one-time migration of the legacy `RustDesk` config directory into the
+/// rebranded `APP_NAME` directory, so each device keeps its ID + keypair across the rename.
+/// Best-effort, idempotent (skips once the new dir exists), and never deletes the legacy dir.
+#[cfg(windows)]
+pub fn migrate_legacy_config() {
+    let app = APP_NAME.read().unwrap().clone();
+    if app == "RustDesk" {
+        return; // not rebranded
+    }
+    // Compute both dirs exactly like `Config::path` (org "" on Windows, same `patch`) so the
+    // service (SYSTEM) and interactive-user contexts each migrate their own profile.
+    let dir_for = |name: &str| {
+        directories_next::ProjectDirs::from("", "", name)
+            .map(|p| patch(p.config_dir().to_path_buf()))
+    };
+    let (Some(new_dir), Some(old_dir)) = (dir_for(&app), dir_for("RustDesk")) else {
+        return;
+    };
+    if new_dir.exists() || !old_dir.exists() || old_dir == new_dir {
+        return; // already migrated, fresh install, or nothing to do
+    }
+    let _ = copy_config_tree(&old_dir, &new_dir, "RustDesk", &app, true);
+}
+
+#[cfg(windows)]
+fn copy_config_tree(
+    from: &std::path::Path,
+    to: &std::path::Path,
+    old_name: &str,
+    new_name: &str,
+    top: bool,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let fname = entry.file_name().to_string_lossy().to_string();
+        // Only top-level files are app-name-prefixed (RustDesk.toml, RustDesk2.toml, RustDesk_ab,
+        // ...); subdirectory entries (e.g. peers/) keep their original names.
+        let dst_name = if top && fname.starts_with(old_name) {
+            format!("{}{}", new_name, &fname[old_name.len()..])
+        } else {
+            fname
+        };
+        let dst = to.join(dst_name);
+        if src.is_dir() {
+            copy_config_tree(&src, &dst, old_name, new_name, false)?;
+        } else {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
 }
 
 impl Config2 {
