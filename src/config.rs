@@ -498,58 +498,21 @@ fn patch(path: PathBuf) -> PathBuf {
     path
 }
 
-/// SullTec rebrand: one-time migration of the legacy `RustDesk` config directory into the
-/// rebranded `APP_NAME` directory, so each device keeps its ID + keypair across the rename.
-/// Best-effort, idempotent (skips once the new dir exists), and never deletes the legacy dir.
-#[cfg(windows)]
-pub fn migrate_legacy_config() {
-    let app = APP_NAME.read().unwrap().clone();
-    if app == "RustDesk" {
-        return; // not rebranded
-    }
-    // Compute both dirs exactly like `Config::path` (org "" on Windows, same `patch`) so the
-    // service (SYSTEM) and interactive-user contexts each migrate their own profile.
-    let dir_for = |name: &str| {
-        directories_next::ProjectDirs::from("", "", name)
-            .map(|p| patch(p.config_dir().to_path_buf()))
-    };
-    let (Some(new_dir), Some(old_dir)) = (dir_for(&app), dir_for("RustDesk")) else {
-        return;
-    };
-    if new_dir.exists() || !old_dir.exists() || old_dir == new_dir {
-        return; // already migrated, fresh install, or nothing to do
-    }
-    let _ = copy_config_tree(&old_dir, &new_dir, "RustDesk", &app, true);
+/// SullTec naming policy. The display name (`APP_NAME`, e.g. "SullTec Remote") is what end
+/// users read; on disk it splits into two derived forms so paths never carry the space:
+///   * `app_dir_name()`  — folder names: "SullTec Remote" -> "SullTecRemote"
+///   * `app_file_base()` — program file stems: "SullTec Remote" -> "sulltec-remote"
+///     (the binary is `sulltec-remote.exe`, config files `sulltec-remote.toml`/`_ab`/`_group`).
+/// Identifiers that are neither a folder nor a file (Windows service name, URI scheme, named
+/// pipes) keep their own forms via `get_app_ident()` / `APP_NAME` and are unaffected.
+#[inline]
+pub fn app_dir_name() -> String {
+    APP_NAME.read().unwrap().replace(' ', "")
 }
 
-#[cfg(windows)]
-fn copy_config_tree(
-    from: &std::path::Path,
-    to: &std::path::Path,
-    old_name: &str,
-    new_name: &str,
-    top: bool,
-) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let src = entry.path();
-        let fname = entry.file_name().to_string_lossy().to_string();
-        // Only top-level files are app-name-prefixed (RustDesk.toml, RustDesk2.toml, RustDesk_ab,
-        // ...); subdirectory entries (e.g. peers/) keep their original names.
-        let dst_name = if top && fname.starts_with(old_name) {
-            format!("{}{}", new_name, &fname[old_name.len()..])
-        } else {
-            fname
-        };
-        let dst = to.join(dst_name);
-        if src.is_dir() {
-            copy_config_tree(&src, &dst, old_name, new_name, false)?;
-        } else {
-            std::fs::copy(&src, &dst)?;
-        }
-    }
-    Ok(())
+#[inline]
+pub fn app_file_base() -> String {
+    APP_NAME.read().unwrap().to_lowercase().replace(' ', "-")
 }
 
 impl Config2 {
@@ -803,7 +766,9 @@ impl Config {
     }
 
     fn file_(suffix: &str) -> PathBuf {
-        let name = format!("{}{}", *APP_NAME.read().unwrap(), suffix);
+        // SullTec: config files are sulltec-remote.toml / sulltec-remote2.toml (file base),
+        // not the spaced display name.
+        let name = format!("{}{}", app_file_base(), suffix);
         Config::with_extension(Self::path(name))
     }
 
@@ -856,9 +821,10 @@ impl Config {
             let org = "".to_owned();
             #[cfg(target_os = "macos")]
             let org = ORG.read().unwrap().clone();
-            // /var/root for root
+            // /var/root for root. SullTec: the on-disk app folder is the spaceless dir name
+            // ("SullTecRemote"), not the spaced display name.
             if let Some(project) =
-                directories_next::ProjectDirs::from("", &org, &APP_NAME.read().unwrap())
+                directories_next::ProjectDirs::from("", &org, &app_dir_name())
             {
                 let mut path = patch(project.config_dir().to_path_buf());
                 path.push(p);
@@ -879,21 +845,21 @@ impl Config {
         #[cfg(target_os = "macos")]
         {
             if let Some(path) = dirs_next::home_dir().as_mut() {
-                path.push(format!("Library/Logs/{}", *APP_NAME.read().unwrap()));
+                path.push(format!("Library/Logs/{}", app_dir_name()));
                 return path.clone();
             }
         }
         #[cfg(target_os = "linux")]
         {
             let mut path = Self::get_home();
-            path.push(format!(".local/share/logs/{}", *APP_NAME.read().unwrap()));
+            path.push(format!(".local/share/logs/{}", app_dir_name()));
             std::fs::create_dir_all(&path).ok();
             return path;
         }
         #[cfg(target_os = "android")]
         {
             let mut path = Self::get_home();
-            path.push(format!("{}/Logs", *APP_NAME.read().unwrap()));
+            path.push(format!("{}/Logs", app_dir_name()));
             std::fs::create_dir_all(&path).ok();
             return path;
         }
@@ -2600,7 +2566,7 @@ pub struct Ab {
 
 impl Ab {
     fn path() -> PathBuf {
-        let filename = format!("{}_ab", APP_NAME.read().unwrap().clone());
+        let filename = format!("{}_ab", app_file_base());
         Config::path(filename)
     }
 
@@ -2730,7 +2696,7 @@ pub struct Group {
 
 impl Group {
     fn path() -> PathBuf {
-        let filename = format!("{}_group", APP_NAME.read().unwrap().clone());
+        let filename = format!("{}_group", app_file_base());
         Config::path(filename)
     }
 
