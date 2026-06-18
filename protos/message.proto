@@ -88,9 +88,11 @@ message LoginRequest {
   string my_platform = 13;
   bytes hwid = 14;
   string avatar = 17;
-  // SullTec key-pair logon: detached Ed25519 signature over `CONSOLE-LOGON\n{challenge}`, made with
-  // the console's private key. The controlled device verifies it against its baked console public key
-  // and grants without the device password. Empty for normal (password) logons; stock peers ignore it.
+  // SullTec key-pair logon: ATTACHED Ed25519 signature (`sig(64)‖msg`, libsodium `crypto_sign` —
+  // produced by sodiumoxide `sign::sign`, verified by `sign::verify`) over `CONSOLE-LOGON\n{challenge}`,
+  // made with the console's private key. The controlled device verifies it against its baked console
+  // public key and grants without the device password. Empty for normal (password) logons; stock peers
+  // ignore it.
   bytes console_logon_sig = 18;
 }
 
