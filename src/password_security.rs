@@ -11,6 +11,8 @@ enum VerificationMethod {
     OnlyUseTemporaryPassword,
     OnlyUsePermanentPassword,
     UseBothPasswords,
+    // SullTec: only console key-pair logon is accepted; no device password is generated or accepted.
+    KeypairOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +47,8 @@ fn verification_method() -> VerificationMethod {
         VerificationMethod::OnlyUseTemporaryPassword
     } else if method == "use-permanent-password" {
         VerificationMethod::OnlyUsePermanentPassword
+    } else if method == "use-keypair-only" {
+        VerificationMethod::KeypairOnly
     } else {
         VerificationMethod::UseBothPasswords // default
     }
@@ -62,11 +66,22 @@ pub fn temporary_password_length() -> usize {
 }
 
 pub fn temporary_enabled() -> bool {
-    verification_method() != VerificationMethod::OnlyUsePermanentPassword
+    matches!(
+        verification_method(),
+        VerificationMethod::OnlyUseTemporaryPassword | VerificationMethod::UseBothPasswords
+    )
 }
 
 pub fn permanent_enabled() -> bool {
-    verification_method() != VerificationMethod::OnlyUseTemporaryPassword
+    matches!(
+        verification_method(),
+        VerificationMethod::OnlyUsePermanentPassword | VerificationMethod::UseBothPasswords
+    )
+}
+
+/// SullTec: true when the device accepts ONLY console key-pair logon (no device password).
+pub fn keypair_only() -> bool {
+    verification_method() == VerificationMethod::KeypairOnly
 }
 
 pub fn has_valid_password() -> bool {
