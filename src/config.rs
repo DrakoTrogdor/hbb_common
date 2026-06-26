@@ -616,6 +616,66 @@ pub fn store_path<T: serde::Serialize>(path: PathBuf, cfg: T) -> crate::ResultTy
     }
 }
 
+/// The legacy per-user / service-profile config directory (`directories` `config_dir` + `patch`).
+/// Used off Windows, and as the migration SOURCE when moving to machine-wide config on Windows.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn user_config_dir() -> PathBuf {
+    #[cfg(not(target_os = "macos"))]
+    let org = "".to_owned();
+    #[cfg(target_os = "macos")]
+    let org = ORG.read().unwrap().clone();
+    // /var/root for root. SullTec: the on-disk app folder is the spaceless dir name ("SullTecRemote").
+    if let Some(project) = directories_next::ProjectDirs::from("", &org, &app_dir_name()) {
+        return patch(project.config_dir().to_path_buf());
+    }
+    PathBuf::new()
+}
+
+/// SullTec (Windows): the machine-wide config directory `%ProgramData%\<app_dir_name>\config`, shared
+/// by the SYSTEM service and every user session so the box keeps ONE identity. `None` when
+/// `%ProgramData%` is unset (then `Config::path` falls back to the per-user dir).
+#[cfg(windows)]
+fn machine_config_dir() -> Option<PathBuf> {
+    std::env::var_os("ProgramData").map(|pd| {
+        let mut p = PathBuf::from(pd);
+        p.push(app_dir_name());
+        p.push("config");
+        p
+    })
+}
+
+/// One-time migration of an existing per-user / service-profile config into the machine-wide dir so a
+/// box that was already enrolled keeps its RustDesk ID + keypair when it moves to shared config. Only
+/// runs when the shared dir has no config yet AND the old one carries a real identity, so an empty /
+/// secondary profile never clobbers the authoritative one (the SYSTEM service, which holds the
+/// registered identity and starts first, migrates its own config; user sessions just read it).
+#[cfg(windows)]
+fn migrate_user_config_to_machine(machine_dir: &Path) {
+    let main = format!("{}.toml", app_file_base());
+    if machine_dir.join(&main).exists() {
+        return; // shared config already populated
+    }
+    let old_dir = user_config_dir();
+    if old_dir.as_os_str().is_empty() {
+        return;
+    }
+    // Only adopt a config that actually holds an identity (id/enc_id + keypair).
+    if load_path::<Config>(old_dir.join(&main)).is_empty() {
+        return;
+    }
+    if std::fs::create_dir_all(machine_dir).is_err() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(&old_dir) {
+        for entry in entries.flatten() {
+            let src = entry.path();
+            if src.is_file() {
+                let _ = std::fs::copy(&src, machine_dir.join(entry.file_name()));
+            }
+        }
+    }
+}
+
 impl Config {
     fn load_<T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug>(
         suffix: &str,
@@ -817,20 +877,24 @@ impl Config {
         }
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            #[cfg(not(target_os = "macos"))]
-            let org = "".to_owned();
-            #[cfg(target_os = "macos")]
-            let org = ORG.read().unwrap().clone();
-            // /var/root for root. SullTec: the on-disk app folder is the spaceless dir name
-            // ("SullTecRemote"), not the spaced display name.
-            if let Some(project) =
-                directories_next::ProjectDirs::from("", &org, &app_dir_name())
-            {
-                let mut path = patch(project.config_dir().to_path_buf());
+            // SullTec: on Windows, store config MACHINE-WIDE (`%ProgramData%\SullTecRemote\config`) so
+            // the SYSTEM service and every interactive / RDS user session share ONE config + identity,
+            // not a per-user dir. On first access we migrate an existing per-user / service-profile
+            // config that holds an identity into the shared dir, so an already-enrolled box keeps its
+            // RustDesk ID + keypair (this converges on a service RESTART — no reboot). `%ProgramData%`
+            // is service/admin-writable and user-readable, so sessions read the managed identity but
+            // can't tamper with it (a failed user-session write just logs — see `store_`).
+            #[cfg(windows)]
+            if let Some(dir) = machine_config_dir() {
+                static MIGRATED: std::sync::Once = std::sync::Once::new();
+                MIGRATED.call_once(|| migrate_user_config_to_machine(&dir));
+                let mut path = dir;
                 path.push(p);
                 return path;
             }
-            "".into()
+            let mut path = user_config_dir();
+            path.push(p);
+            path
         }
     }
 
