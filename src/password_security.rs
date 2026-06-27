@@ -101,9 +101,19 @@ pub fn approve_mode() -> ApproveMode {
 }
 
 pub fn hide_cm() -> bool {
-    approve_mode() == ApproveMode::Password
+    // Upstream: hide the connection-manager window only with password-approve + permanent-password +
+    // allow-hide-cm.
+    let classic = approve_mode() == ApproveMode::Password
         && verification_method() == VerificationMethod::OnlyUsePermanentPassword
-        && crate::config::option2bool("allow-hide-cm", &Config::get_option("allow-hide-cm"))
+        && crate::config::option2bool("allow-hide-cm", &Config::get_option("allow-hide-cm"));
+    // SullTec managed fleet: a console-pushed `hide-cm` hides the CM window whenever the endpoint never
+    // needs an INTERACTIVE accept click — keypair-only logon (every connection is key-authorized and
+    // auto-accepts, bypassing approve-mode) OR any approve-mode that isn't "click" (password auto-accepts;
+    // console key-pair logon likewise auto-accepts). Gated on that so a prompt the user must click is
+    // never silently hidden out from under them.
+    let managed = crate::config::option2bool("hide-cm", &Config::get_option("hide-cm"))
+        && (keypair_only() || approve_mode() != ApproveMode::Click);
+    classic || managed
 }
 
 const VERSION_LEN: usize = 2;
