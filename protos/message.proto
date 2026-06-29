@@ -865,6 +865,12 @@ message Misc {
     DisplayResolution change_display_resolution = 36;
     MessageQuery message_query = 37;
     int32 follow_current_display = 38;
+    // SullTec: a standalone push of the controlled host's current Windows/RDS session list, sent
+    // OUTSIDE the initial PeerInfo so the controller can re-open its session picker on demand with a
+    // freshly-enumerated list (catching users who logged on after connect). The controller requests it
+    // by sending `selected_sid = REFRESH_WINDOWS_SESSIONS_SID` (u32::MAX), which the controlled side
+    // special-cases to re-enumerate + reply with this instead of switching sessions.
+    WindowsSessions windows_sessions = 39;
   }
 }
 
