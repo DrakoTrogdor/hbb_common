@@ -487,6 +487,24 @@ pub struct VersionCheckRequest {
 pub struct VersionCheckResponse {
     #[serde(default)]
     pub url: String,
+    // SullTec (H6): package-authenticity fields. All `#[serde(default)]` and additive — an
+    // un-updated client deserializes only `url` and silently ignores these; a verifying client
+    // checks the attached Ed25519 signature over `CONSOLE-PKG\n{version}\n{sha256}\n{size}` against
+    // the console logon key before executing the downloaded package. See
+    // docs/plans_todo/PLAN-H6-signed-update-channel.md.
+    /// Exact hosted version token the signature covers (the verifier reconstructs the message with
+    /// this, not with the version parsed out of `url`).
+    #[serde(default)]
+    pub version: String,
+    /// Base64 attached signature (`sig(64)‖msg`) over `CONSOLE-PKG\n{version}\n{sha256}\n{size}`.
+    #[serde(default)]
+    pub sig: String,
+    /// Lowercase hex SHA-256 (64 chars) of the hosted package bytes.
+    #[serde(default)]
+    pub sha256: String,
+    /// Hosted package length in bytes.
+    #[serde(default)]
+    pub size: u64,
 }
 
 pub const VER_TYPE_RUSTDESK_CLIENT: &str = "rustdesk-client";
