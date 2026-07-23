@@ -491,7 +491,7 @@ pub struct VersionCheckResponse {
     // un-updated client deserializes only `url` and silently ignores these; a verifying client
     // checks the attached Ed25519 signature over `CONSOLE-PKG\n{version}\n{sha256}\n{size}` against
     // the console logon key before executing the downloaded package. See
-    // docs/plans_todo/PLAN-H6-signed-update-channel.md.
+    // docs/plans_completed/PLAN-H6-signed-update-channel.md.
     /// Exact hosted version token the signature covers (the verifier reconstructs the message with
     /// this, not with the version parsed out of `url`).
     #[serde(default)]
