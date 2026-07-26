@@ -88,7 +88,19 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
-    pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+    // SullTec: pre-seeded rather than empty. Upstream `get_api_server` STRIPS `:21114` off any
+    // `https://` api-server URL unless this builtin reads "Y" — so without it a client pointed at
+    // https://<host>:21114 silently retargets port 443. That is not a clean failure on our network:
+    // 443 is forwarded to an unrelated host, so the device talks to somebody else's service and the
+    // symptom appears over there rather than here.
+    //
+    // Upstream populates this map only from the signed `custom.txt` path, which this fork does not
+    // use (it bakes into OVERWRITE_SETTINGS instead), so seeding the initial value is the way in.
+    // This enables nothing on its own: the api-server default above is still `http://`, and a
+    // device only moves to https when a locked policy tells it to.
+    pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(HashMap::from([
+        (keys::OPTION_ALLOW_HTTPS_21114.to_owned(), "Y".to_owned()),
+    ]));
 }
 
 #[cfg(target_os = "android")]
