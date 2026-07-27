@@ -80,7 +80,16 @@ lazy_static::lazy_static! {
     pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(HashMap::from([
         ("custom-rendezvous-server".to_owned(), "rustdesk.sulltec.com".to_owned()),
         ("relay-server".to_owned(), "rustdesk.sulltec.com".to_owned()),
-        ("api-server".to_owned(), "http://rustdesk.sulltec.com:21114".to_owned()),
+        // https, so a FRESH INSTALL is TLS-native before it has ever spoken to the console. This is
+        // only ever the value a device uses when it carries no `api-server` policy — every managed
+        // device is told explicitly, and a LOCKED policy value overwrites this entry (both live in
+        // this same map, and the policy mirror inserts over the seed on load). So flipping it moves
+        // nobody who is already enrolled; it decides where a device points before policy reaches it.
+        //
+        // It must land BEFORE plaintext is ever refused on the client port: a device installed after
+        // that point would otherwise boot on http, be refused, and never enrol — stranded somewhere
+        // the console has never seen it.
+        ("api-server".to_owned(), "https://rustdesk.sulltec.com:21114".to_owned()),
         ("key".to_owned(), "<redacted>".to_owned()),
     ]));
     pub static ref DEFAULT_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
