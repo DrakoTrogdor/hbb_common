@@ -90,7 +90,10 @@ lazy_static::lazy_static! {
         // that point would otherwise boot on http, be refused, and never enrol — stranded somewhere
         // the console has never seen it.
         ("api-server".to_owned(), "https://rustdesk.sulltec.com:21114".to_owned()),
-        ("key".to_owned(), "<redacted>".to_owned()),
+        // Compile-time, never a literal — see RS_PUB_KEY. This is the EFFECTIVE value (overwrite
+        // outranks saved config and RS_PUB_KEY is only the fallback), so it is the one that has to
+        // carry the injected key.
+        ("key".to_owned(), RS_PUB_KEY.to_owned()),
     ]));
     pub static ref DEFAULT_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
@@ -146,9 +149,26 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-// SullTec: baked-in server + key so deployed clients auto-connect (EXTENSION-PLAN C).
+// SullTec: baked-in server so deployed clients auto-connect.
 pub const RENDEZVOUS_SERVERS: &[&str] = &["rustdesk.sulltec.com"];
-pub const RS_PUB_KEY: &str = "<redacted>";
+
+/// The rendezvous server's public key, supplied at COMPILE TIME via `ST_SERVER_KEY`.
+///
+/// It is deliberately not a literal. hbbs compares it as a bearer string
+/// (`if !key.is_empty() && ph.licence_key != key`), so committing it to a public repo hands anyone
+/// who reads the source the ability to use the rendezvous and relay servers. Keeping it out of the
+/// tree also removes the rotation footgun this used to carry: the value existed in two places, both
+/// inside a submodule, with nothing to warn a build that skipped editing them — a rebuild would
+/// silently ship the previous key.
+///
+/// Unset resolves to empty, which fails CLOSED: hbbs holds a non-empty key, so an empty
+/// `licence_key` is refused with LICENSE_MISMATCH rather than connecting to the wrong place.
+/// `Build-Release.ps1` refuses to produce a release artifact when it is empty; plain `cargo
+/// check`/`build` still work for development.
+pub const RS_PUB_KEY: &str = match option_env!("ST_SERVER_KEY") {
+    Some(k) => k,
+    None => "",
+};
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
 pub const RELAY_PORT: i32 = 21117;
