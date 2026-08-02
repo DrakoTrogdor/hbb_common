@@ -77,9 +77,16 @@ lazy_static::lazy_static! {
     // SullTec: FORCED server config. OVERWRITE_SETTINGS is the top layer in Config::get_option
     // (get_or checks it before saved options + defaults), so these win over ANY saved/IP config
     // on deployed clients — even ones that already had RustDesk pointed elsewhere.
-    pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(HashMap::from([
-        ("custom-rendezvous-server".to_owned(), "rustdesk.sulltec.com".to_owned()),
-        ("relay-server".to_owned(), "rustdesk.sulltec.com".to_owned()),
+    // Compile-time, never literals — see ST_SERVER_HOST, ST_API_SERVER and RS_PUB_KEY. An unset
+    // value is OMITTED rather than inserted empty: this map is the TOP layer, so an empty entry
+    // would outrank a saved config and a policy alike, turning "this build was not told where its
+    // server is" into "this device has no server", which no later policy could repair.
+    pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new({
+        let mut m: HashMap<String, String> = HashMap::new();
+        if !ST_SERVER_HOST.is_empty() {
+            m.insert("custom-rendezvous-server".to_owned(), ST_SERVER_HOST.to_owned());
+            m.insert("relay-server".to_owned(), ST_SERVER_HOST.to_owned());
+        }
         // https, so a FRESH INSTALL is TLS-native before it has ever spoken to the console. This is
         // only ever the value a device uses when it carries no `api-server` policy — every managed
         // device is told explicitly, and a LOCKED policy value overwrites this entry (both live in
@@ -89,12 +96,16 @@ lazy_static::lazy_static! {
         // It must land BEFORE plaintext is ever refused on the client port: a device installed after
         // that point would otherwise boot on http, be refused, and never enrol — stranded somewhere
         // the console has never seen it.
-        ("api-server".to_owned(), "https://rustdesk.sulltec.com:21114".to_owned()),
-        // Compile-time, never a literal — see RS_PUB_KEY. This is the EFFECTIVE value (overwrite
-        // outranks saved config and RS_PUB_KEY is only the fallback), so it is the one that has to
-        // carry the injected key.
-        ("key".to_owned(), RS_PUB_KEY.to_owned()),
-    ]));
+        if !ST_API_SERVER.is_empty() {
+            m.insert("api-server".to_owned(), ST_API_SERVER.to_owned());
+        }
+        // The key is inserted unconditionally, unlike the addresses above. This is the EFFECTIVE
+        // value (overwrite outranks saved config, and RS_PUB_KEY is only the fallback), so an empty
+        // one has to reach hbbs and be REFUSED with LICENSE_MISMATCH. Omitting it would instead let
+        // a saved key from some earlier configuration answer in its place.
+        m.insert("key".to_owned(), RS_PUB_KEY.to_owned());
+        m
+    });
     pub static ref DEFAULT_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
@@ -149,8 +160,33 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-// SullTec: baked-in server so deployed clients auto-connect.
-pub const RENDEZVOUS_SERVERS: &[&str] = &["rustdesk.sulltec.com"];
+/// The rendezvous + relay host, supplied at COMPILE TIME via `ST_SERVER_HOST`.
+///
+/// Deliberately not a literal, for the same two reasons as `RS_PUB_KEY` below. It named a specific
+/// deployment inside a submodule of a repo that publishes, and rebranding meant hand-editing source
+/// in four places with nothing to warn a build that missed one.
+///
+/// Unset resolves to empty, which fails CLOSED: the client finds no server and simply never
+/// connects, rather than reaching some default that is not ours. `Build-Release.ps1` refuses to
+/// produce a release artifact without it; plain `cargo check`/`build` still work for development.
+pub const ST_SERVER_HOST: &str = match option_env!("ST_SERVER_HOST") {
+    Some(h) => h,
+    None => "",
+};
+
+/// The client API base URL, supplied at COMPILE TIME via `ST_API_SERVER`. Normally
+/// `https://<ST_SERVER_HOST>:21114`, which is what `Build-Release.ps1` derives when it is not
+/// configured separately; it is its own variable because the API can legitimately sit on a
+/// different port or name than the rendezvous service.
+pub const ST_API_SERVER: &str = match option_env!("ST_API_SERVER") {
+    Some(a) => a,
+    None => "",
+};
+
+// SullTec: baked-in server so deployed clients auto-connect. One entry, always — an empty slice
+// would panic the upstream `RENDEZVOUS_SERVERS[0]` in client.rs, whereas an empty HOST just fails
+// to resolve. Failing closed must not mean failing loudly in somebody else's code.
+pub const RENDEZVOUS_SERVERS: &[&str] = &[ST_SERVER_HOST];
 
 /// The rendezvous server's public key, supplied at COMPILE TIME via `ST_SERVER_KEY`.
 ///
