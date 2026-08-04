@@ -84,3 +84,110 @@ pub fn app_file_base() -> String {
         .to_lowercase()
         .replace(' ', "-")
 }
+
+/// The machine-wide config directory `%ProgramData%\<app_dir_name>\config`.
+///
+/// The SYSTEM service and every interactive or RDS user session read the SAME config here, so the box
+/// keeps ONE identity instead of a per-user one each. `%ProgramData%` is service- and admin-writable
+/// but only user-readable, so a session reads the managed identity and cannot tamper with it.
+///
+/// `None` when `%ProgramData%` is unset, in which case the caller falls back to the per-user dir.
+#[cfg(windows)]
+pub fn machine_config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("ProgramData").map(|pd| {
+        let mut p = std::path::PathBuf::from(pd);
+        p.push(app_dir_name());
+        p.push("config");
+        p
+    })
+}
+
+/// Move an existing per-user or service-profile config into the machine-wide dir, once, so a box that
+/// was already enrolled keeps its RustDesk ID and keypair when it converts to shared config. This
+/// converges on a service RESTART; no reboot is needed.
+///
+/// `old_dir` is passed in because resolving it needs `config`'s own private path patching.
+///
+/// Runs only when the shared dir has no config yet AND the old one carries a real identity. That
+/// second condition is what stops an empty or secondary profile clobbering the authoritative one: the
+/// SYSTEM service holds the registered identity and starts first, so it migrates its own config and
+/// user sessions then simply read it.
+#[cfg(windows)]
+pub fn migrate_user_config_to_machine(machine_dir: &std::path::Path, old_dir: std::path::PathBuf) {
+    let main = format!("{}.toml", app_file_base());
+    if machine_dir.join(&main).exists() {
+        return; // shared config already populated
+    }
+    if old_dir.as_os_str().is_empty() {
+        return;
+    }
+    // Only adopt a config that actually holds an identity (id/enc_id + keypair).
+    if crate::config::load_path::<crate::config::Config>(old_dir.join(&main)).is_empty() {
+        return;
+    }
+    if std::fs::create_dir_all(machine_dir).is_err() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(&old_dir) {
+        for entry in entries.flatten() {
+            let src = entry.path();
+            if src.is_file() {
+                let _ = std::fs::copy(&src, machine_dir.join(entry.file_name()));
+            }
+        }
+    }
+}
+
+/// The initial contents of `config::OVERWRITE_SETTINGS` — the FORCED server configuration.
+///
+/// This map is the top layer in `Config::get_option` (`get_or` checks it before saved options and
+/// before defaults), so these entries win over ANY saved or IP config on a deployed client, including
+/// one that already had RustDesk pointed somewhere else.
+///
+/// An unset compile-time value is OMITTED rather than inserted empty. Because this is the top layer,
+/// an empty entry would outrank both a saved config and a policy — turning "this build was not told
+/// where its server is" into "this device has no server", which no later policy could repair.
+pub fn overwrite_settings() -> std::collections::HashMap<String, String> {
+    let mut m: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if !ST_SERVER_HOST.is_empty() {
+        m.insert("custom-rendezvous-server".to_owned(), ST_SERVER_HOST.to_owned());
+        m.insert("relay-server".to_owned(), ST_SERVER_HOST.to_owned());
+    }
+    // https, so a FRESH INSTALL is TLS-native before it has ever spoken to the console. This is only
+    // ever the value a device uses when it carries no `api-server` policy — every managed device is
+    // told explicitly, and a LOCKED policy value overwrites this entry (both live in this same map,
+    // and the policy mirror inserts over the seed on load). So changing it moves nobody who is
+    // already enrolled; it decides where a device points before policy reaches it.
+    //
+    // It must land BEFORE plaintext is ever refused on the client port: a device installed after that
+    // point would otherwise boot on http, be refused, and never enrol — stranded somewhere the
+    // console has never seen it.
+    if !ST_API_SERVER.is_empty() {
+        m.insert("api-server".to_owned(), ST_API_SERVER.to_owned());
+    }
+    // The key is inserted unconditionally, unlike the addresses above. This is the EFFECTIVE value
+    // (overwrite outranks saved config, and the fallback is only consulted when this is absent), so
+    // an empty one has to reach hbbs and be REFUSED with LICENSE_MISMATCH. Omitting it would instead
+    // let a saved key from some earlier configuration answer in its place.
+    m.insert("key".to_owned(), SERVER_KEY.to_owned());
+    m
+}
+
+/// The initial contents of `config::BUILTIN_SETTINGS` — pre-seeded rather than empty.
+///
+/// Upstream's `get_api_server` STRIPS `:21114` off any `https://` api-server URL unless this builtin
+/// reads "Y". Without it a client pointed at `https://<host>:21114` silently retargets port 443,
+/// which is not a clean failure on a typical network: 443 usually forwards to an unrelated host, so
+/// the device talks to somebody else's service and the symptom appears over there rather than here.
+///
+/// Upstream populates this map only from the signed `custom.txt` path, which this fork does not use —
+/// it bakes into [`overwrite_settings`] instead — so seeding the initial value is the way in.
+///
+/// This enables nothing on its own: the `api-server` default above decides the scheme, and a device
+/// only moves to https when a locked policy tells it to.
+pub fn builtin_settings() -> std::collections::HashMap<String, String> {
+    std::collections::HashMap::from([(
+        crate::config::keys::OPTION_ALLOW_HTTPS_21114.to_owned(),
+        "Y".to_owned(),
+    )])
+}

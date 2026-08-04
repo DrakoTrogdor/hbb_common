@@ -74,56 +74,15 @@ lazy_static::lazy_static! {
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
     pub static ref DEFAULT_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
-    // SullTec: FORCED server config. OVERWRITE_SETTINGS is the top layer in Config::get_option
-    // (get_or checks it before saved options + defaults), so these win over ANY saved/IP config
-    // on deployed clients — even ones that already had RustDesk pointed elsewhere.
-    // Compile-time, never literals — see ST_SERVER_HOST, ST_API_SERVER and RS_PUB_KEY. An unset
-    // value is OMITTED rather than inserted empty: this map is the TOP layer, so an empty entry
-    // would outrank a saved config and a policy alike, turning "this build was not told where its
-    // server is" into "this device has no server", which no later policy could repair.
-    pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new({
-        let mut m: HashMap<String, String> = HashMap::new();
-        if !ST_SERVER_HOST.is_empty() {
-            m.insert("custom-rendezvous-server".to_owned(), ST_SERVER_HOST.to_owned());
-            m.insert("relay-server".to_owned(), ST_SERVER_HOST.to_owned());
-        }
-        // https, so a FRESH INSTALL is TLS-native before it has ever spoken to the console. This is
-        // only ever the value a device uses when it carries no `api-server` policy — every managed
-        // device is told explicitly, and a LOCKED policy value overwrites this entry (both live in
-        // this same map, and the policy mirror inserts over the seed on load). So flipping it moves
-        // nobody who is already enrolled; it decides where a device points before policy reaches it.
-        //
-        // It must land BEFORE plaintext is ever refused on the client port: a device installed after
-        // that point would otherwise boot on http, be refused, and never enrol — stranded somewhere
-        // the console has never seen it.
-        if !ST_API_SERVER.is_empty() {
-            m.insert("api-server".to_owned(), ST_API_SERVER.to_owned());
-        }
-        // The key is inserted unconditionally, unlike the addresses above. This is the EFFECTIVE
-        // value (overwrite outranks saved config, and RS_PUB_KEY is only the fallback), so an empty
-        // one has to reach hbbs and be REFUSED with LICENSE_MISMATCH. Omitting it would instead let
-        // a saved key from some earlier configuration answer in its place.
-        m.insert("key".to_owned(), RS_PUB_KEY.to_owned());
-        m
-    });
+    pub static ref OVERWRITE_SETTINGS: RwLock<HashMap<String, String>> =
+        RwLock::new(crate::sulltec_remote::overwrite_settings());
     pub static ref DEFAULT_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref OVERWRITE_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
-    // SullTec: pre-seeded rather than empty. Upstream `get_api_server` STRIPS `:21114` off any
-    // `https://` api-server URL unless this builtin reads "Y" — so without it a client pointed at
-    // https://<host>:21114 silently retargets port 443. That is not a clean failure on our network:
-    // 443 is forwarded to an unrelated host, so the device talks to somebody else's service and the
-    // symptom appears over there rather than here.
-    //
-    // Upstream populates this map only from the signed `custom.txt` path, which this fork does not
-    // use (it bakes into OVERWRITE_SETTINGS instead), so seeding the initial value is the way in.
-    // This enables nothing on its own: the api-server default above is still `http://`, and a
-    // device only moves to https when a locked policy tells it to.
-    pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(HashMap::from([
-        (keys::OPTION_ALLOW_HTTPS_21114.to_owned(), "Y".to_owned()),
-    ]));
+    pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> =
+        RwLock::new(crate::sulltec_remote::builtin_settings());
 }
 
 #[cfg(target_os = "android")]
@@ -160,15 +119,14 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-/// The rendezvous + relay host, supplied at COMPILE TIME via `ST_SERVER_HOST`.
-///
-// SullTec: the deployment's addresses and key live in `sulltec_remote`; re-exported here
-// because callers already reach for them through `config::`.
+/// The deployment's rendezvous host and API base. Both are compile-time; see `sulltec_remote` for
+/// the values and why they are not literals. Re-exported here because callers reach for them
+/// through `config::`.
 pub use crate::sulltec_remote::{ST_API_SERVER, ST_SERVER_HOST};
 
-// SullTec: baked-in server so deployed clients auto-connect. One entry, always — an empty slice
-// would panic the upstream `RENDEZVOUS_SERVERS[0]` in client.rs, whereas an empty HOST just fails
-// to resolve. Failing closed must not mean failing loudly in somebody else's code.
+/// The baked-in server, so a deployed client auto-connects. Always exactly one entry: an empty slice
+/// would panic upstream's `RENDEZVOUS_SERVERS[0]` in client.rs, whereas an empty HOST merely fails to
+/// resolve. Failing closed must not mean failing loudly inside somebody else's code.
 pub const RENDEZVOUS_SERVERS: &[&str] = &[ST_SERVER_HOST];
 
 /// Upstream's name for the rendezvous key; the value and its reasoning are in `sulltec_remote`.
@@ -663,51 +621,6 @@ fn user_config_dir() -> PathBuf {
     PathBuf::new()
 }
 
-/// SullTec (Windows): the machine-wide config directory `%ProgramData%\<app_dir_name>\config`, shared
-/// by the SYSTEM service and every user session so the box keeps ONE identity. `None` when
-/// `%ProgramData%` is unset (then `Config::path` falls back to the per-user dir).
-#[cfg(windows)]
-fn machine_config_dir() -> Option<PathBuf> {
-    std::env::var_os("ProgramData").map(|pd| {
-        let mut p = PathBuf::from(pd);
-        p.push(app_dir_name());
-        p.push("config");
-        p
-    })
-}
-
-/// One-time migration of an existing per-user / service-profile config into the machine-wide dir so a
-/// box that was already enrolled keeps its RustDesk ID + keypair when it moves to shared config. Only
-/// runs when the shared dir has no config yet AND the old one carries a real identity, so an empty /
-/// secondary profile never clobbers the authoritative one (the SYSTEM service, which holds the
-/// registered identity and starts first, migrates its own config; user sessions just read it).
-#[cfg(windows)]
-fn migrate_user_config_to_machine(machine_dir: &Path) {
-    let main = format!("{}.toml", app_file_base());
-    if machine_dir.join(&main).exists() {
-        return; // shared config already populated
-    }
-    let old_dir = user_config_dir();
-    if old_dir.as_os_str().is_empty() {
-        return;
-    }
-    // Only adopt a config that actually holds an identity (id/enc_id + keypair).
-    if load_path::<Config>(old_dir.join(&main)).is_empty() {
-        return;
-    }
-    if std::fs::create_dir_all(machine_dir).is_err() {
-        return;
-    }
-    if let Ok(entries) = std::fs::read_dir(&old_dir) {
-        for entry in entries.flatten() {
-            let src = entry.path();
-            if src.is_file() {
-                let _ = std::fs::copy(&src, machine_dir.join(entry.file_name()));
-            }
-        }
-    }
-}
-
 impl Config {
     fn load_<T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug>(
         suffix: &str,
@@ -909,17 +822,12 @@ impl Config {
         }
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            // SullTec: on Windows, store config MACHINE-WIDE (`%ProgramData%\SullTecRemote\config`) so
-            // the SYSTEM service and every interactive / RDS user session share ONE config + identity,
-            // not a per-user dir. On first access we migrate an existing per-user / service-profile
-            // config that holds an identity into the shared dir, so an already-enrolled box keeps its
-            // RustDesk ID + keypair (this converges on a service RESTART — no reboot). `%ProgramData%`
-            // is service/admin-writable and user-readable, so sessions read the managed identity but
-            // can't tamper with it (a failed user-session write just logs — see `store_`).
             #[cfg(windows)]
-            if let Some(dir) = machine_config_dir() {
+            if let Some(dir) = crate::sulltec_remote::machine_config_dir() {
                 static MIGRATED: std::sync::Once = std::sync::Once::new();
-                MIGRATED.call_once(|| migrate_user_config_to_machine(&dir));
+                MIGRATED.call_once(|| {
+                    crate::sulltec_remote::migrate_user_config_to_machine(&dir, user_config_dir())
+                });
                 let mut path = dir;
                 path.push(p);
                 return path;
