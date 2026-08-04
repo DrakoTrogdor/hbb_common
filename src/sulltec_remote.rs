@@ -106,18 +106,31 @@ pub fn machine_config_dir() -> Option<std::path::PathBuf> {
 /// was already enrolled keeps its RustDesk ID and keypair when it converts to shared config. This
 /// converges on a service RESTART; no reboot is needed.
 ///
-/// `old_dir` is passed in because resolving it needs `config`'s own private path patching.
+/// `old_dir` is passed as a closure because resolving it needs `config`'s own private path
+/// patching, and it must not run on the hot path when the migration has already happened.
 ///
 /// Runs only when the shared dir has no config yet AND the old one carries a real identity. That
 /// second condition is what stops an empty or secondary profile clobbering the authoritative one: the
 /// SYSTEM service holds the registered identity and starts first, so it migrates its own config and
 /// user sessions then simply read it.
 #[cfg(windows)]
-pub fn migrate_user_config_to_machine(machine_dir: &std::path::Path, old_dir: std::path::PathBuf) {
+pub fn migrate_user_config_to_machine(
+    machine_dir: &std::path::Path,
+    old_dir: impl FnOnce() -> std::path::PathBuf,
+) {
+    // Once per process, and the source directory is resolved lazily inside — `Config::path` is called
+    // constantly, and neither the resolution nor the directory walk below should run on every call.
+    static MIGRATED: std::sync::Once = std::sync::Once::new();
+    let mut first = false;
+    MIGRATED.call_once(|| first = true);
+    if !first {
+        return;
+    }
     let main = format!("{}.toml", app_file_base());
     if machine_dir.join(&main).exists() {
         return; // shared config already populated
     }
+    let old_dir = old_dir();
     if old_dir.as_os_str().is_empty() {
         return;
     }
@@ -190,4 +203,18 @@ pub fn builtin_settings() -> std::collections::HashMap<String, String> {
         crate::config::keys::OPTION_ALLOW_HTTPS_21114.to_owned(),
         "Y".to_owned(),
     )])
+}
+
+/// Should a console-managed endpoint hide the connection-manager window?
+///
+/// A console-pushed `hide-cm` hides the CM whenever the endpoint never needs an INTERACTIVE accept
+/// click: keypair-only logon (every connection is key-authorized and auto-accepts, bypassing
+/// approve-mode), or any approve-mode that is not "click" (password auto-accepts, and console
+/// key-pair logon likewise). Gated on exactly that, so a prompt the user is meant to click is never
+/// silently hidden out from under them.
+pub fn hide_cm_managed() -> bool {
+    use crate::password_security::{approve_mode, keypair_only, ApproveMode};
+
+    crate::config::option2bool("hide-cm", &crate::config::Config::get_option("hide-cm"))
+        && (keypair_only() || approve_mode() != ApproveMode::Click)
 }
