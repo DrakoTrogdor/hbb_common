@@ -140,8 +140,8 @@ lazy_static::lazy_static! {
     pub static ref APP_HOME_DIR: RwLock<String> = Default::default();
 }
 
-pub const LINK_DOCS_HOME: &str = "https://www.sulltec.com/docs/en/";
-pub const LINK_DOCS_X11_REQUIRED: &str = "https://www.sulltec.com/docs/en/manual/linux/#x11-required";
+pub const LINK_DOCS_HOME: &str = crate::sulltec_remote::DOCS_HOME;
+pub const LINK_DOCS_X11_REQUIRED: &str = crate::sulltec_remote::DOCS_X11_REQUIRED;
 pub const LINK_HEADLESS_LINUX_SUPPORT: &str =
     "https://github.com/rustdesk/rustdesk/wiki/Headless-Linux-Support";
 
@@ -162,49 +162,17 @@ const CHARS: &[char] = &[
 
 /// The rendezvous + relay host, supplied at COMPILE TIME via `ST_SERVER_HOST`.
 ///
-/// Deliberately not a literal, for the same two reasons as `RS_PUB_KEY` below. It named a specific
-/// deployment inside a submodule of a repo that publishes, and rebranding meant hand-editing source
-/// in four places with nothing to warn a build that missed one.
-///
-/// Unset resolves to empty, which fails CLOSED: the client finds no server and simply never
-/// connects, rather than reaching some default that is not ours. `Build-Release.ps1` refuses to
-/// produce a release artifact without it; plain `cargo check`/`build` still work for development.
-pub const ST_SERVER_HOST: &str = match option_env!("ST_SERVER_HOST") {
-    Some(h) => h,
-    None => "",
-};
-
-/// The client API base URL, supplied at COMPILE TIME via `ST_API_SERVER`. Normally
-/// `https://<ST_SERVER_HOST>:21114`, which is what `Build-Release.ps1` derives when it is not
-/// configured separately; it is its own variable because the API can legitimately sit on a
-/// different port or name than the rendezvous service.
-pub const ST_API_SERVER: &str = match option_env!("ST_API_SERVER") {
-    Some(a) => a,
-    None => "",
-};
+// SullTec: the deployment's addresses and key live in `sulltec_remote`; re-exported here
+// because callers already reach for them through `config::`.
+pub use crate::sulltec_remote::{ST_API_SERVER, ST_SERVER_HOST};
 
 // SullTec: baked-in server so deployed clients auto-connect. One entry, always — an empty slice
 // would panic the upstream `RENDEZVOUS_SERVERS[0]` in client.rs, whereas an empty HOST just fails
 // to resolve. Failing closed must not mean failing loudly in somebody else's code.
 pub const RENDEZVOUS_SERVERS: &[&str] = &[ST_SERVER_HOST];
 
-/// The rendezvous server's public key, supplied at COMPILE TIME via `ST_SERVER_KEY`.
-///
-/// It is deliberately not a literal. hbbs compares it as a bearer string
-/// (`if !key.is_empty() && ph.licence_key != key`), so committing it to a public repo hands anyone
-/// who reads the source the ability to use the rendezvous and relay servers. Keeping it out of the
-/// tree also removes the rotation footgun this used to carry: the value existed in two places, both
-/// inside a submodule, with nothing to warn a build that skipped editing them — a rebuild would
-/// silently ship the previous key.
-///
-/// Unset resolves to empty, which fails CLOSED: hbbs holds a non-empty key, so an empty
-/// `licence_key` is refused with LICENSE_MISMATCH rather than connecting to the wrong place.
-/// `Build-Release.ps1` refuses to produce a release artifact when it is empty; plain `cargo
-/// check`/`build` still work for development.
-pub const RS_PUB_KEY: &str = match option_env!("ST_SERVER_KEY") {
-    Some(k) => k,
-    None => "",
-};
+/// Upstream's name for the rendezvous key; the value and its reasoning are in `sulltec_remote`.
+pub const RS_PUB_KEY: &str = crate::sulltec_remote::SERVER_KEY;
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
 pub const RELAY_PORT: i32 = 21117;
@@ -575,22 +543,9 @@ fn patch(path: PathBuf) -> PathBuf {
     path
 }
 
-/// SullTec naming policy. The display name (`APP_NAME`, e.g. "SullTec Remote") is what end
-/// users read; on disk it splits into two derived forms so paths never carry the space:
-///   * `app_dir_name()`  — folder names: "SullTec Remote" -> "SullTecRemote"
-///   * `app_file_base()` — program file stems: "SullTec Remote" -> "sulltec-remote"
-///     (the binary is `sulltec-remote.exe`, config files `sulltec-remote.toml`/`_ab`/`_group`).
-/// Identifiers that are neither a folder nor a file (Windows service name, URI scheme, named
-/// pipes) keep their own forms via `get_app_ident()` / `APP_NAME` and are unaffected.
-#[inline]
-pub fn app_dir_name() -> String {
-    APP_NAME.read().unwrap().replace(' ', "")
-}
-
-#[inline]
-pub fn app_file_base() -> String {
-    APP_NAME.read().unwrap().to_lowercase().replace(' ', "-")
-}
+// SullTec: the two derived forms of the product name live in `sulltec_remote`; re-exported
+// here because this module is where callers look for naming.
+pub use crate::sulltec_remote::{app_dir_name, app_file_base};
 
 impl Config2 {
     fn load() -> Config2 {
