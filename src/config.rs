@@ -69,7 +69,14 @@ lazy_static::lazy_static! {
     static ref ONLINE: Mutex<HashMap<String, i64>> = Default::default();
     pub static ref PROD_RENDEZVOUS_SERVER: RwLock<String> = RwLock::new("".to_owned());
     pub static ref EXE_RENDEZVOUS_SERVER: RwLock<String> = Default::default();
-    pub static ref APP_NAME: RwLock<String> = RwLock::new("SullTec Remote".to_owned());
+    // No space, deliberately. Upstream treats this as one name that is safe for every
+    // purpose - it lowercases it for the HKCR class and the service, appends ".exe" for the
+    // binary, and interpolates it into installer scripts. "RustDesk" survives all of that; a
+    // spaced name survives none of it, which is why the fork previously carried five derived
+    // forms and had to substitute the right one at every upstream call site. Keeping the
+    // identifier space-free makes upstream's own derivations correct and lets those
+    // substitutions go away. See docs/audits/APP-NAME-SURFACE.csv.
+    pub static ref APP_NAME: RwLock<String> = RwLock::new("SullTecRemote".to_owned());
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
     pub static ref NEW_STORED_PEER_CONFIG: Mutex<HashSet<String>> = Default::default();
@@ -503,7 +510,6 @@ fn patch(path: PathBuf) -> PathBuf {
 
 // SullTec: the two derived forms of the product name live in `sulltec_remote`; re-exported
 // here because this module is where callers look for naming.
-pub use crate::sulltec_remote::{app_dir_name, app_file_base};
 
 impl Config2 {
     fn load() -> Config2 {
@@ -614,8 +620,8 @@ fn user_config_dir() -> PathBuf {
     let org = "".to_owned();
     #[cfg(target_os = "macos")]
     let org = ORG.read().unwrap().clone();
-    // /var/root for root. SullTec: the on-disk app folder is the spaceless dir name ("SullTecRemote").
-    if let Some(project) = directories_next::ProjectDirs::from("", &org, &app_dir_name()) {
+    // /var/root for root
+    if let Some(project) = directories_next::ProjectDirs::from("", &org, &APP_NAME.read().unwrap()) {
         return patch(project.config_dir().to_path_buf());
     }
     PathBuf::new()
@@ -771,9 +777,7 @@ impl Config {
     }
 
     fn file_(suffix: &str) -> PathBuf {
-        // SullTec: config files are sulltec-remote.toml / sulltec-remote2.toml (file base),
-        // not the spaced display name.
-        let name = format!("{}{}", app_file_base(), suffix);
+        let name = format!("{}{}", *APP_NAME.read().unwrap(), suffix);
         Config::with_extension(Self::path(name))
     }
 
@@ -825,6 +829,7 @@ impl Config {
             #[cfg(windows)]
             if let Some(dir) = crate::sulltec_remote::machine_config_dir() {
                 crate::sulltec_remote::migrate_user_config_to_machine(&dir, user_config_dir);
+                crate::sulltec_remote::migrate_legacy_config_stems(&dir);
                 let mut path = dir;
                 path.push(p);
                 return path;
@@ -846,21 +851,21 @@ impl Config {
         #[cfg(target_os = "macos")]
         {
             if let Some(path) = dirs_next::home_dir().as_mut() {
-                path.push(format!("Library/Logs/{}", app_dir_name()));
+                path.push(format!("Library/Logs/{}", *APP_NAME.read().unwrap()));
                 return path.clone();
             }
         }
         #[cfg(target_os = "linux")]
         {
             let mut path = Self::get_home();
-            path.push(format!(".local/share/logs/{}", app_dir_name()));
+            path.push(format!(".local/share/logs/{}", *APP_NAME.read().unwrap()));
             std::fs::create_dir_all(&path).ok();
             return path;
         }
         #[cfg(target_os = "android")]
         {
             let mut path = Self::get_home();
-            path.push(format!("{}/Logs", app_dir_name()));
+            path.push(format!("{}/Logs", *APP_NAME.read().unwrap()));
             std::fs::create_dir_all(&path).ok();
             return path;
         }
@@ -2567,7 +2572,7 @@ pub struct Ab {
 
 impl Ab {
     fn path() -> PathBuf {
-        let filename = format!("{}_ab", app_file_base());
+        let filename = format!("{}_ab", APP_NAME.read().unwrap().clone());
         Config::path(filename)
     }
 
@@ -2697,7 +2702,7 @@ pub struct Group {
 
 impl Group {
     fn path() -> PathBuf {
-        let filename = format!("{}_group", app_file_base());
+        let filename = format!("{}_group", APP_NAME.read().unwrap().clone());
         Config::path(filename)
     }
 

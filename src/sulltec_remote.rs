@@ -59,33 +59,7 @@ pub const DOCS_HOME: &str = "https://www.sulltec.com/docs/en/";
 /// Read through `config::LINK_DOCS_X11_REQUIRED`, which is upstream's name for it.
 pub const DOCS_X11_REQUIRED: &str = "https://www.sulltec.com/docs/en/manual/linux/#x11-required";
 
-/// Folder form of the product name: "SullTec Remote" -> "SullTecRemote".
-///
-/// The display name (`config::APP_NAME`) is what end users read; on disk it splits into two derived
-/// forms so no path ever carries the space. Upstream gets away with using the display name directly
-/// because "RustDesk" and "rustdesk.exe" differ only by case and NTFS ignores that — a hyphenated
-/// rename does not.
-///
-/// Identifiers that are neither a folder nor a file — the Windows service name, the URI scheme,
-/// named pipes — keep their own forms via `get_app_ident()` and are unaffected.
-#[inline]
-pub fn app_dir_name() -> String {
-    crate::config::APP_NAME.read().unwrap().replace(' ', "")
-}
-
-/// File-stem form of the product name: "SullTec Remote" -> "sulltec-remote".
-///
-/// The binary is `sulltec-remote.exe`; config files are `sulltec-remote.toml` / `_ab` / `_group`.
-#[inline]
-pub fn app_file_base() -> String {
-    crate::config::APP_NAME
-        .read()
-        .unwrap()
-        .to_lowercase()
-        .replace(' ', "-")
-}
-
-/// The machine-wide config directory `%ProgramData%\<app_dir_name>\config`.
+/// The machine-wide config directory `%ProgramData%\SullTecRemote\config`.
 ///
 /// The SYSTEM service and every interactive or RDS user session read the SAME config here, so the box
 /// keeps ONE identity instead of a per-user one each. `%ProgramData%` is service- and admin-writable
@@ -96,7 +70,7 @@ pub fn app_file_base() -> String {
 pub fn machine_config_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("ProgramData").map(|pd| {
         let mut p = std::path::PathBuf::from(pd);
-        p.push(app_dir_name());
+        p.push(crate::config::APP_NAME.read().unwrap().clone());
         p.push("config");
         p
     })
@@ -126,7 +100,7 @@ pub fn migrate_user_config_to_machine(
     if !first {
         return;
     }
-    let main = format!("{}.toml", app_file_base());
+    let main = format!("{}.toml", *crate::config::APP_NAME.read().unwrap());
     if machine_dir.join(&main).exists() {
         return; // shared config already populated
     }
@@ -148,6 +122,58 @@ pub fn migrate_user_config_to_machine(
                 let _ = std::fs::copy(&src, machine_dir.join(entry.file_name()));
             }
         }
+    }
+}
+
+/// Config file stem used before `APP_NAME` lost its space.
+///
+/// Config files are named from `APP_NAME` (`SullTecRemote.toml`); they used to be named from a
+/// hyphenated file base (`sulltec-remote.toml`). See [`migrate_legacy_config_stems`].
+pub const LEGACY_CONFIG_STEM: &str = "sulltec-remote";
+
+/// Adopt the config a pre-rename install left behind, so a client crossing the rename keeps its
+/// RustDesk identity instead of minting a new one and arriving at the console as a new device.
+///
+/// COPIES rather than renames, deliberately. If the update that delivered the new binary then
+/// fails, the old binary restarts and must still find its own config — a move would turn a
+/// recoverable failure into a permanently lost identity.
+///
+/// ## Removal criterion
+///
+/// Delete this (and [`LEGACY_CONFIG_STEM`]) once EVERY device in the console reports a client
+/// version >= the release that renamed the binary — `GET /api/ro/devices`, `version` field.
+/// Not "one release later": fleet auto-update is off, so devices cross whenever each is pulled,
+/// and one that was offline through the rollout, restored from an image, or installed from an
+/// archived package will still be on the old stems long afterwards.
+pub fn migrate_legacy_config_stems(dir: &std::path::Path) {
+    let new_stem = crate::config::APP_NAME.read().unwrap().clone();
+    if new_stem.is_empty() || new_stem == LEGACY_CONFIG_STEM {
+        return;
+    }
+    // Already crossed over — cheap early-out, this runs from Config::path().
+    if dir.join(format!("{new_stem}.toml")).exists() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(suffix) = name.strip_prefix(LEGACY_CONFIG_STEM) else {
+            continue;
+        };
+        // Only real config files. The stem is also the prefix of the per-thread dump files the
+        // client drops in this directory ("sulltec-remote2.<pid>_ThreadId(<n>)_<stamp>"), and
+        // there can be thousands of them — a bare prefix match would copy every one.
+        if !(suffix.ends_with(".toml") || suffix == "_ab" || suffix == "_group") {
+            continue;
+        }
+        let dst = dir.join(format!("{new_stem}{suffix}"));
+        if dst.exists() {
+            continue;
+        }
+        let _ = std::fs::copy(entry.path(), dst);
     }
 }
 
