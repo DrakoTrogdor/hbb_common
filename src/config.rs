@@ -829,7 +829,6 @@ impl Config {
             #[cfg(windows)]
             if let Some(dir) = crate::sulltec_remote::machine_config_dir() {
                 crate::sulltec_remote::migrate_user_config_to_machine(&dir, user_config_dir);
-                crate::sulltec_remote::migrate_legacy_config_stems(&dir);
                 let mut path = dir;
                 path.push(p);
                 return path;
