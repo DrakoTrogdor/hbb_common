@@ -131,12 +131,28 @@ pub fn migrate_user_config_to_machine(
 /// hyphenated file base (`sulltec-remote.toml`). See [`migrate_legacy_config_stems`].
 pub const LEGACY_CONFIG_STEM: &str = "sulltec-remote";
 
+/// Written once the stem migration has run, so it runs exactly once.
+///
+/// The obvious sentinel — "does `{new_stem}.toml` already exist?" — is WRONG, and measurably so.
+/// Any process linking this crate creates that file the moment it resolves a config path under
+/// the new name, complete with a freshly generated identity. On a workstation that also runs the
+/// operator console, the console wrote one before the client ever crossed over (observed
+/// 2026-08-04: a 177-byte `SullTecRemote.toml` alongside the client's real 1169-byte
+/// `sulltec-remote.toml`). Existence therefore cannot distinguish "already migrated" from
+/// "another program just minted a new identity here", and treating it as the former silently
+/// abandons the device's registered identity — the exact outcome this function exists to prevent.
+const STEM_MIGRATION_MARKER: &str = ".legacy-stem-migrated";
+
 /// Adopt the config a pre-rename install left behind, so a client crossing the rename keeps its
 /// RustDesk identity instead of minting a new one and arriving at the console as a new device.
 ///
 /// COPIES rather than renames, deliberately. If the update that delivered the new binary then
 /// fails, the old binary restarts and must still find its own config — a move would turn a
 /// recoverable failure into a permanently lost identity.
+///
+/// OVERWRITES the new-stem files, equally deliberately. Reaching the copy at all means the marker
+/// is absent, so nothing here was produced by a migration; a new-stem config present at that point
+/// is a fresh identity minted by some other process, not the device's own, and must not win.
 ///
 /// ## Removal criterion
 ///
@@ -150,13 +166,23 @@ pub fn migrate_legacy_config_stems(dir: &std::path::Path) {
     if new_stem.is_empty() || new_stem == LEGACY_CONFIG_STEM {
         return;
     }
-    // Already crossed over — cheap early-out, this runs from Config::path().
-    if dir.join(format!("{new_stem}.toml")).exists() {
+    // Cheap early-out — this runs from Config::path(), which is hot.
+    let marker = dir.join(STEM_MIGRATION_MARKER);
+    if marker.exists() {
+        return;
+    }
+    // Only adopt a legacy config that actually carries an identity, the same guard
+    // `migrate_user_config_to_machine` uses. Absent or empty means there is nothing to preserve
+    // (a fresh install), so record the decision and stop looking on every later call.
+    let legacy_main = dir.join(format!("{LEGACY_CONFIG_STEM}.toml"));
+    if crate::config::load_path::<crate::config::Config>(legacy_main).is_empty() {
+        let _ = std::fs::write(&marker, b"");
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
+    let mut copied_all = true;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
@@ -169,11 +195,21 @@ pub fn migrate_legacy_config_stems(dir: &std::path::Path) {
         if !(suffix.ends_with(".toml") || suffix == "_ab" || suffix == "_group") {
             continue;
         }
+        // Stage then rename: std::fs::copy is not atomic, and a half-written config read by a
+        // concurrent process is indistinguishable from a corrupt one. The rename is.
         let dst = dir.join(format!("{new_stem}{suffix}"));
-        if dst.exists() {
+        let staged = dir.join(format!("{new_stem}{suffix}.migrating"));
+        if std::fs::copy(entry.path(), &staged).is_ok() && std::fs::rename(&staged, &dst).is_ok() {
             continue;
         }
-        let _ = std::fs::copy(entry.path(), dst);
+        let _ = std::fs::remove_file(&staged);
+        copied_all = false;
+    }
+    // Only claim completion if everything landed. A non-elevated session cannot write here at all
+    // (the %ProgramData% config is deliberately machine-wide), and must not mark the job done on
+    // behalf of the service that can.
+    if copied_all {
+        let _ = std::fs::write(&marker, b"");
     }
 }
 
