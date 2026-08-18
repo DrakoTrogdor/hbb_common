@@ -53,11 +53,40 @@ pub const SERVER_KEY: &str = match option_env!("ST_SERVER_KEY") {
     None => "",
 };
 
-/// Documentation root. Read through `config::LINK_DOCS_HOME`, which is upstream's name for it.
-pub const DOCS_HOME: &str = "https://www.sulltec.com/docs/en/";
+/// The product's own page. Everything below it is a child of this path, so a section that moves
+/// changes here and nowhere else.
+pub const SITE_HOME: &str = "https://www.sulltec.com/";
 
+/// Where a build is fetched. Not a direct file link: the page explains that an installer carries
+/// the deployment's server settings, which a build taken from anywhere else does not.
+pub const DOWNLOAD: &str = "https://www.sulltec.com/SullTecRemote/download/";
+
+/// What the product costs.
+pub const PRICING: &str = "https://www.sulltec.com/SullTecRemote/pricing/";
+
+/// The privacy policy. The site also answers `/Privacy`, which redirects here — this names the
+/// destination so a client does not spend a round trip discovering it.
+pub const PRIVACY: &str = "https://www.sulltec.com/privacy-policy/";
+
+/// Documentation root. Read through `config::LINK_DOCS_HOME`, which is upstream's name for it.
+pub const DOCS_HOME: &str = "https://www.sulltec.com/SullTecRemote/docs/";
+
+/// Wayland cannot be captured, so a session connects and shows black until the desktop is on X11.
 /// Read through `config::LINK_DOCS_X11_REQUIRED`, which is upstream's name for it.
-pub const DOCS_X11_REQUIRED: &str = "https://www.sulltec.com/docs/en/manual/linux/#x11-required";
+pub const DOCS_X11_REQUIRED: &str =
+    "https://www.sulltec.com/SullTecRemote/docs/linux/#x11-required";
+
+/// Reaching a Linux box before anyone has signed in, which needs the client running as a service.
+pub const DOCS_LINUX_LOGIN_SCREEN: &str =
+    "https://www.sulltec.com/SullTecRemote/docs/linux/#login-screen";
+
+/// A Linux session that shows the screen but ignores input.
+pub const DOCS_LINUX_PERMISSIONS: &str =
+    "https://www.sulltec.com/SullTecRemote/docs/linux/#permissions-issue";
+
+/// The two permissions macOS withholds until they are granted by hand.
+pub const DOCS_MAC_PERMISSION: &str =
+    "https://www.sulltec.com/SullTecRemote/docs/mac/#enable-permissions";
 
 /// The machine-wide config directory `%ProgramData%\SullTecRemote\config`.
 ///
