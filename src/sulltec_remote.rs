@@ -99,11 +99,13 @@ pub fn overwrite_settings() -> std::collections::HashMap<String, String> {
     m
 }
 
+const ALLOW_HTTPS_21114: &str = "allow-https-21114";
+
 /// Upstream's `get_api_server` STRIPS `:21114` off any `https://` api-server URL unless this builtin
 /// reads "Y".
 pub fn builtin_settings() -> std::collections::HashMap<String, String> {
     std::collections::HashMap::from([(
-        crate::config::keys::OPTION_ALLOW_HTTPS_21114.to_owned(),
+        ALLOW_HTTPS_21114.to_owned(),
         "Y".to_owned(),
     )])
 }
