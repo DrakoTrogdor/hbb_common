@@ -82,7 +82,7 @@ pub fn migrate_user_config_to_machine(
     }
 }
 
-pub fn overwrite_settings() -> std::collections::HashMap<String, String> {
+fn overwrite_settings() -> std::collections::HashMap<String, String> {
     let mut m: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if !ST_SERVER_HOST.is_empty() {
         m.insert("custom-rendezvous-server".to_owned(), ST_SERVER_HOST.to_owned());
@@ -93,6 +93,16 @@ pub fn overwrite_settings() -> std::collections::HashMap<String, String> {
     }
     m.insert("key".to_owned(), SERVER_KEY.to_owned());
     m
+}
+
+pub fn seed_overwrite_settings() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        crate::config::OVERWRITE_SETTINGS
+            .write()
+            .unwrap()
+            .extend(overwrite_settings())
+    });
 }
 
 const ALLOW_HTTPS_21114: &str = "allow-https-21114";
