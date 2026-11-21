@@ -79,7 +79,6 @@ pub fn permanent_enabled() -> bool {
     )
 }
 
-/// SullTec: true when the device accepts ONLY console key-pair logon (no device password).
 pub fn keypair_only() -> bool {
     verification_method() == VerificationMethod::KeypairOnly
 }
@@ -101,8 +100,6 @@ pub fn approve_mode() -> ApproveMode {
 }
 
 pub fn hide_cm() -> bool {
-    // Upstream: hide the connection-manager window only with password-approve + permanent-password +
-    // allow-hide-cm.
     let classic = approve_mode() == ApproveMode::Password
         && verification_method() == VerificationMethod::OnlyUsePermanentPassword
         && crate::config::option2bool("allow-hide-cm", &Config::get_option("allow-hide-cm"));

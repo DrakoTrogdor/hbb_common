@@ -69,13 +69,6 @@ lazy_static::lazy_static! {
     static ref ONLINE: Mutex<HashMap<String, i64>> = Default::default();
     pub static ref PROD_RENDEZVOUS_SERVER: RwLock<String> = RwLock::new("".to_owned());
     pub static ref EXE_RENDEZVOUS_SERVER: RwLock<String> = Default::default();
-    // No space, deliberately. Upstream treats this as one name that is safe for every
-    // purpose - it lowercases it for the HKCR class and the service, appends ".exe" for the
-    // binary, and interpolates it into installer scripts. "RustDesk" survives all of that; a
-    // spaced name survives none of it, which is why the fork previously carried five derived
-    // forms and had to substitute the right one at every upstream call site. Keeping the
-    // identifier space-free makes upstream's own derivations correct and lets those
-    // substitutions go away. See docs/audits/APP-NAME-SURFACE.csv.
     pub static ref APP_NAME: RwLock<String> = RwLock::new("SullTecRemote".to_owned());
     static ref KEY_PAIR: Mutex<Option<KeyPair>> = Default::default();
     static ref USER_DEFAULT_CONFIG: RwLock<(UserDefaultConfig, Instant)> = RwLock::new((UserDefaultConfig::load(), Instant::now()));
@@ -123,17 +116,10 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-/// The deployment's rendezvous host and API base. Both are compile-time; see `sulltec_remote` for
-/// the values and why they are not literals. Re-exported here because callers reach for them
-/// through `config::`.
 pub use crate::sulltec_remote::{ST_API_SERVER, ST_SERVER_HOST};
 
-/// The baked-in server, so a deployed client auto-connects. Always exactly one entry: an empty slice
-/// would panic upstream's `RENDEZVOUS_SERVERS[0]` in client.rs, whereas an empty HOST merely fails to
-/// resolve. Failing closed must not mean failing loudly inside somebody else's code.
 pub const RENDEZVOUS_SERVERS: &[&str] = &[ST_SERVER_HOST];
 
-/// Upstream's name for the rendezvous key; the value and its reasoning are in `sulltec_remote`.
 pub const RS_PUB_KEY: &str = crate::sulltec_remote::SERVER_KEY;
 
 pub const RENDEZVOUS_PORT: i32 = 21116;
@@ -505,8 +491,6 @@ fn patch(path: PathBuf) -> PathBuf {
     path
 }
 
-// SullTec: the two derived forms of the product name live in `sulltec_remote`; re-exported
-// here because this module is where callers look for naming.
 
 impl Config2 {
     fn load() -> Config2 {
@@ -609,8 +593,6 @@ pub fn store_path<T: serde::Serialize>(path: PathBuf, cfg: T) -> crate::ResultTy
     }
 }
 
-/// The legacy per-user / service-profile config directory (`directories` `config_dir` + `patch`).
-/// Used off Windows, and as the migration SOURCE when moving to machine-wide config on Windows.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn user_config_dir() -> PathBuf {
     #[cfg(not(target_os = "macos"))]
