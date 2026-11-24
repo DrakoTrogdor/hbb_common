@@ -47,41 +47,6 @@ pub fn machine_config_dir() -> Option<std::path::PathBuf> {
     })
 }
 
-#[cfg(windows)]
-pub fn migrate_user_config_to_machine(
-    machine_dir: &std::path::Path,
-    old_dir: impl FnOnce() -> std::path::PathBuf,
-) {
-    static MIGRATED: std::sync::Once = std::sync::Once::new();
-    let mut first = false;
-    MIGRATED.call_once(|| first = true);
-    if !first {
-        return;
-    }
-    let main = format!("{}.toml", *crate::config::APP_NAME.read().unwrap());
-    if machine_dir.join(&main).exists() {
-        return;
-    }
-    let old_dir = old_dir();
-    if old_dir.as_os_str().is_empty() {
-        return;
-    }
-    if crate::config::load_path::<crate::config::Config>(old_dir.join(&main)).is_empty() {
-        return;
-    }
-    if std::fs::create_dir_all(machine_dir).is_err() {
-        return;
-    }
-    if let Ok(entries) = std::fs::read_dir(&old_dir) {
-        for entry in entries.flatten() {
-            let src = entry.path();
-            if src.is_file() {
-                let _ = std::fs::copy(&src, machine_dir.join(entry.file_name()));
-            }
-        }
-    }
-}
-
 fn overwrite_settings() -> std::collections::HashMap<String, String> {
     let mut m: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if !ST_SERVER_HOST.is_empty() {
